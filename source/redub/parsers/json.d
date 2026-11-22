@@ -10,6 +10,25 @@ import core.runtime;
 import redub.tree_generators.dub;
 import core.stdcpp.type_traits;
 
+///Set by `redub test`: the tested package's "unittest" configuration is chosen when none is requested.
+__gshared bool preferUnittestConfiguration;
+///The subpackage under test, by directory or, when it's defined in its parent's recipe, by name.
+private __gshared string testedSubPackageDir;
+private __gshared string testedSubPackageName;
+
+///Whether `c` is the package `redub test` was asked to test: the root package, or the
+///subpackage requested from it.
+private bool isTestedPackage(ParseConfig c, string packageName)
+{
+    import std.string : endsWith;
+    import redub.misc.path : buildNormalizedPath;
+    if(testedSubPackageDir.length)
+        return buildNormalizedPath(c.workingDir) == testedSubPackageDir;
+    if(testedSubPackageName.length)
+        return packageName == testedSubPackageName || packageName.endsWith(":" ~ testedSubPackageName);
+    return c.isRoot && !c.subPackage.length;
+}
+
 /**
  * Those commands are independent of the selected target OS.
  * It will use the host OS instead of targetOS since they depend on the machine running them
@@ -429,6 +448,13 @@ BuildRequirements parse(JSONValue json, ParseConfig cfg, out BuildConfiguration 
                         preferredConfiguration = i.to!int;
                         break;
                     }
+                    ///As dub test does, a test build of the root package uses its "unittest"
+                    ///configuration when it has one and none was requested.
+                    if(preferUnittestConfiguration && !c.subConfiguration.name && name.str == "unittest" && isTestedPackage(c, req.name))
+                    {
+                        preferredConfiguration = i.to!int;
+                        break;
+                    }
                     if(preferredConfiguration == -1)
                     {
                         if(name.str == "unittest")
@@ -599,7 +625,11 @@ BuildRequirements parse(JSONValue json, ParseConfig cfg, out BuildConfiguration 
             {
                 const(JSONValue)* name = "name" in p;
                 if(name.str == cfg.subPackage)
+                {
+                    if(preferUnittestConfiguration && cfg.isRoot)
+                        testedSubPackageName = cfg.subPackage;
                     return parse(p, ParseConfig(cfg.workingDir, cfg.subConfiguration, null, cfg.version_, cfg.cInfo, null, ParseSubConfig(cfg.extra.requiredBy, buildRequirements.name, cfg.extra.isTarget), true, true), pending);
+                }
             }
             else ///Subpackage is on other file
             {
@@ -614,6 +644,8 @@ BuildRequirements parse(JSONValue json, ParseConfig cfg, out BuildConfiguration 
                 if(subPackageName == cfg.subPackage)
                 {
                     import redub.parsers.automatic;
+                    if(preferUnittestConfiguration && cfg.isRoot)
+                        testedSubPackageDir = subPackagePath;
                     return parseProjectCommon(subPackagePath, cfg.cInfo, cfg.subConfiguration, null, null, buildRequirements.name, false, cfg.extra.isTarget, cfg.version_);
                 }
             }
